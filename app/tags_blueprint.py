@@ -1,5 +1,3 @@
-from copy import deepcopy
-
 from flask import Blueprint
 from flask import current_app
 from flask import jsonify
@@ -19,7 +17,8 @@ tags_bp = Blueprint("tags", __name__)
 def combine_tags(input_list, existing_dict=None):
     """
     Reformats a list of dictionaries into a nested dictionary structure, additively merged
-    on top of existing_dict. Does not mutate existing_dict - always returns a new dict.
+    on top of existing_dict. Does not mutate existing_dict - always builds and returns a new
+    dict/lists rather than copying or reusing existing_dict's containers.
 
     Args:
         input_list: List of dictionaries with 'namespace', 'key', and 'value' fields
@@ -28,8 +27,12 @@ def combine_tags(input_list, existing_dict=None):
     Returns:
         New dictionary in the format {namespace: {key: [value, ...]}}
     """
-    # Never mutate the caller's dict - always build/return a new one
-    result = deepcopy(existing_dict) if existing_dict is not None else {}
+    # Rebuild existing_dict's known {namespace: {key: [values]}} shape with fresh
+    # containers at every level, so mutating the result can never affect existing_dict.
+    result = {
+        namespace: {key: list(values) for key, values in ns_tags.items()}
+        for namespace, ns_tags in (existing_dict or {}).items()
+    }
 
     # Process each item in the input list
     for item in input_list:
