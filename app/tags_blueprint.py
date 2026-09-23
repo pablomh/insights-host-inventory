@@ -1,9 +1,12 @@
+from copy import deepcopy
+
 from flask import Blueprint
 from flask import current_app
 from flask import jsonify
 from flask import request
 from sqlalchemy import and_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import load_only
 
 from app.auth.identity import from_auth_header
 from app.models import Host
@@ -15,17 +18,18 @@ tags_bp = Blueprint("tags", __name__)
 
 def combine_tags(input_list, existing_dict=None):
     """
-    Reformats a list of dictionaries into a nested dictionary structure and updates an existing dictionary additively.
+    Reformats a list of dictionaries into a nested dictionary structure, additively merged
+    on top of existing_dict. Does not mutate existing_dict - always returns a new dict.
 
     Args:
         input_list: List of dictionaries with 'namespace', 'key', and 'value' fields
-        existing_dict: Optional existing dictionary to update (default: None)
+        existing_dict: Optional existing dictionary to merge on top of (default: None)
 
     Returns:
-        Updated dictionary in the format {namespace: {key: [value, ...]}}
+        New dictionary in the format {namespace: {key: [value, ...]}}
     """
-    # Initialize result dictionary if none provided
-    result = existing_dict if existing_dict is not None else {}
+    # Never mutate the caller's dict - always build/return a new one
+    result = deepcopy(existing_dict) if existing_dict is not None else {}
 
     # Process each item in the input list
     for item in input_list:
@@ -54,8 +58,9 @@ def combine_tags(input_list, existing_dict=None):
 
 def update_host_tags(session, host, tags):
     try:
-        current_tags = host.tags
-        combine_tags(tags, current_tags)
+        current_tags = combine_tags(tags, host.tags)
+        if current_tags == host.tags:
+            return True
         host._update_tags(current_tags)
         session.add(host)
         return True
@@ -65,7 +70,12 @@ def update_host_tags(session, host, tags):
 
 
 def process_host_batch(session, identity, batch_ids, tags):
-    hosts = session.query(Host).filter(and_(Host.org_id == identity.org_id, Host.id.in_(batch_ids))).all()
+    hosts = (
+        session.query(Host)
+        .options(load_only(Host.id, Host.tags))
+        .filter(and_(Host.org_id == identity.org_id, Host.id.in_(batch_ids)))
+        .all()
+    )
     found_host_ids = {str(host.id) for host in hosts}
     not_found = [hid for hid in batch_ids if str(hid) not in found_host_ids]
 
